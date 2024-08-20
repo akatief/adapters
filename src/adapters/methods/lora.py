@@ -14,10 +14,11 @@ import torch.nn.functional as F
 from transformers.configuration_utils import PretrainedConfig
 from transformers.pytorch_utils import Conv1D
 
-from ..composition import Average, BatchSplit, Parallel, Stack
+from ..composition import Average, BatchSplit, Parallel, Stack, ExpertRouter
 from ..configuration import LoRAConfig, ModelAdaptersConfig
 from .adapter_layer_base import AdapterLayerBase, ComposableAdapterLayerBase
 from .utils import dequantize_bnb_weight
+from ..context import ForwardContext
 
 
 try:
@@ -357,7 +358,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
     """
 
-    supported_compositions = [Stack, BatchSplit, Average, Parallel]
+    supported_compositions = [Stack, BatchSplit, Average, Parallel, ExpertRouter]
     allow_multi_parallelize = True
 
     def __init__(
@@ -505,6 +506,41 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
             self._store_gating_score(adapter_setup, gate)
 
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
+    
+    def compose_expert_routing(self, adapter_setup: ExpertRouter, state: LoRAState, lvl: int = 0) -> LoRAState:
+        context = ForwardContext.get_context()
+        expert_ids = context.adapter_expert_ids
+        if len(expert_ids) != self._bsz(state):
+            raise ValueError("Number of expert ids must match the batch size.")
+        
+        indices = adapter_setup.get_expert_indices(expert_ids)
+        # TODO-FT: implement more refined routing
+        routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float) # (bsz, num_experts)
+
+        loras = [self.loras[e] for e in adapter_setup]
+
+        hidden_states = state.hidden_states
+        if hidden_states is None:
+            hidden_states = state.layer_input
+        
+        # Gather hidden states after dropout...
+        dropout_states = [lora.lora_dropout(hidden_states) for lora in loras]
+        hidden_states = torch.stack(dropout_states, dim=1) # (bsz, n_exp, sent_len, hidden_size)
+
+        # ...as well as A and B matrices        
+        A = torch.stack([lora.lora_A for lora in loras], dim=0) #(n_exp, low_rank, hidden_size)
+        B = torch.stack([lora.lora_B for lora in loras], dim=0) #(n_exp, hidden_size, low_rank)
+
+        # Apply routing to A and B
+        a_routed = torch.einsum("be,erh -> brh", routing, A) # (bsz, low_rank, hidden_size)
+        b_routed = torch.einsum("be,ehr -> bhr", routing, B) # (bsz, hidden_size, low_rank)
+
+        # Apply A and B to hidden states
+        hidden_states = torch.einsum("besh, bhr, brh -> bsh", hidden_states, b_routed, a_routed) # (bsz, sent_len, hidden_size)
+                
+        # TODO-FT: Implement gating if needed
+        
+        return state._replace(hidden_states=hidden_states, last=adapter_setup.last())
 
     def forward(self, input_states: torch.Tensor):
         if self.fan_in_fan_out:

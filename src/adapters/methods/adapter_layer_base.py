@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from ..composition import ALLOWED_NESTINGS, AdapterCompositionBlock, Average, BatchSplit, Fuse, Parallel, Split, Stack
+from ..composition import ALLOWED_NESTINGS, AdapterCompositionBlock, Average, BatchSplit, Fuse, Parallel, Split, Stack, ExpertRouter
 from ..context import AdapterSetup, ForwardContext
 
 
@@ -212,6 +212,7 @@ class ComposableAdapterLayerBase(AdapterLayerBase):
             BatchSplit: "compose_batch_split",
             Parallel: "compose_parallel",
             Average: "compose_average",
+            ExpertRouter: "compose_expert_routing",
         }
 
     def _get_compose_func(self, composition_type: type) -> callable:
@@ -503,6 +504,12 @@ class ComposableAdapterLayerBase(AdapterLayerBase):
         state = self.mean(children_states, weights)
 
         return state
+    
+    def compose_expert_routing(self, adapter_setup: ExpertRouter, state: NamedTuple, lvl: int = 0):
+        """
+        For combining the output representations of multiple expert adapters.
+        """
+        raise NotImplementedError()
 
     def compose(self, adapter_setup: Union[AdapterCompositionBlock, str], state: NamedTuple) -> NamedTuple:
         """The main composition forward method which recursively calls the composition blocks forward methods.

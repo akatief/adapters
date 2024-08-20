@@ -993,8 +993,10 @@ class ModelAdaptersMixin(PushAdapterToHubMixin, ABC):
         # Adapter gating and attention outputs
         context.output_adapter_gating_scores = kwargs.get("output_adapter_gating_scores", False)
         context.output_adapter_fusion_attentions = kwargs.get("output_adapter_fusion_attentions", False)
+        context.output_adapter_expert_ids = kwargs.get("output_adapter_expert_ids", False)
         context.adapter_gating_scores = defaultdict(dict)
         context.adapter_fusion_attentions = defaultdict(dict)
+        context.adapter_expert_ids = kwargs.get("adapter_expert_ids", False)
 
     def get_fusion_regularization_loss(self):
         reg_loss = None

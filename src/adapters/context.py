@@ -82,6 +82,7 @@ class ForwardContext:
         "adapter_gating_scores",
         "adapter_fusion_attentions",
         "adapter_input_parallelized",
+        "adapter_expert_ids",
     ]
     # Additional used attributes not exposed to the user
     # - prompt_tokens_length: length of the prompt tokens

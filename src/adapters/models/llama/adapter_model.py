@@ -85,6 +85,7 @@ class LlamaAdapterModel(EmbeddingAdaptersWrapperMixin, ModelWithFlexibleHeadsAda
             output_hidden_states=output_hidden_states,
             output_adapter_gating_scores=output_adapter_gating_scores,
             output_adapter_fusion_attentions=output_adapter_fusion_attentions,
+            adapter_expert_ids=kwargs.pop("adapter_expert_ids", False),
             adapter_input_parallelized=kwargs.pop("adapter_input_parallelized", False),
             output_context=True,
         )
