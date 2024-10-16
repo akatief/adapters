@@ -513,7 +513,13 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         if len(expert_ids) != self._bsz(state):
             raise ValueError("Number of expert ids must match the batch size.")
         
-        indices = adapter_setup.get_expert_indices(expert_ids)
+        if isinstance(expert_ids, list):
+            indices = adapter_setup.get_expert_indices(expert_ids)
+        elif isinstance(expert_ids, torch.Tensor):
+            indices = expert_ids.squeeze()
+        else:
+            raise ValueError("Expert ids must be a list of strings or a tensor of indices.")
+        
         # TODO-FT: implement more refined routing
         routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float) # (bsz, num_experts)
 
