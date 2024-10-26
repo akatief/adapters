@@ -521,7 +521,8 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
             raise ValueError("Expert ids must be a list of strings or a tensor of indices.")
         
         # TODO-FT: implement more refined routing
-        routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float) # (bsz, num_experts)
+        routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float)
+        routing = routing.unsqueeze(0) if len(routing.shape) == 1 else routing
 
         loras = [self.loras[e] for e in adapter_setup]
 
