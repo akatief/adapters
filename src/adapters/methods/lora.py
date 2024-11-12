@@ -46,6 +46,8 @@ class LoRA(nn.Module):
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
         self.use_gating = config.use_gating
+        self.dropout = config.dropout
+
         # Optional dropout
         if config.dropout > 0.0:
             self.lora_dropout = nn.Dropout(p=config.dropout)
@@ -531,8 +533,10 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
             hidden_states = state.layer_input
         
         # Gather hidden states after dropout...
-        dropout_states = [lora.lora_dropout(hidden_states) for lora in loras]
-        hidden_states = torch.stack(dropout_states, dim=1) # (bsz, n_exp, sent_len, hidden_size)
+        # NOTE: This assumes same dropout for all experts
+        hidden_states = hidden_states.unsqueeze(1).expand(-1, adapter_setup.num_experts, -1, -1)
+        if loras[0].dropout > 0.0:
+            hidden_states = F.dropout(hidden_states, p=loras[0].dropout, training=self.training)
 
         # ...as well as A and B matrices        
         A = torch.stack([lora.lora_A for lora in loras], dim=0) #(n_exp, low_rank, hidden_size)
