@@ -107,20 +107,27 @@ class Average(AdapterCompositionBlock):
 
 
 class ExpertRouter(AdapterCompositionBlock):
-    def __init__(self, *experts: List[str]):
-        super().__init__(*experts)
+    def __init__(self, *router_name: List[str], n_experts: int, experts: List[str]):
+        super().__init__(*router_name)
         # Prepares a mapping from expert ids to indices
         # Multiple indices can be assigned to the same expert id
         self.expert_map = {expert: i for i, expert in enumerate(experts)}
         self.num_experts = len(experts)
         self.experts = experts
+        self.router_name = router_name
 
     def get_expert_indices(self, expert_ids: List[str]) -> torch.Tensor:
         indices = [self.expert_map[expert_id] for expert_id in expert_ids]
         return torch.tensor(indices, dtype=torch.long)
     
+    def get_expert_ids(self, expert_indices: torch.Tensor) -> List[str]:
+        return [self.experts[i] for i in expert_indices]
+
+    def get_router_name(self) -> List[str]:
+        return self.router_name[0]
+
     def __iter__(self):
-        return self.experts.__iter__()
+        return self.router_name.__iter__()
 
 # Mapping each composition block type to the allowed nested types
 ALLOWED_NESTINGS = {

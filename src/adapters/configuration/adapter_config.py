@@ -470,6 +470,7 @@ class LoRAConfig(AdapterConfig):
 
     r: int = 8
     alpha: int = 8
+    n_experts: int = None
     dropout: float = 0.0
     attn_matrices: List[str] = field(default_factory=lambda: ["q", "v"])
     composition_mode: str = "add"
