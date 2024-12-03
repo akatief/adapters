@@ -513,116 +513,48 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
 
     def compose_expert_routing(self, adapter_setup: ExpertRouter, state: LoRAState, lvl: int = 0) -> LoRAState:
-        start_time = time.time()
-
-        # Step 1: Get context and expert IDs
-        t1 = time.time()
         context = ForwardContext.get_context()
         expert_ids = context.adapter_expert_ids
         if len(expert_ids) != self._bsz(state):
             raise ValueError("Number of expert ids must match the batch size.")
-        print(f"Get context and expert IDs: {time.time() - t1:.3e} seconds")
-
-        # Step 2: Determine indices
-        t2 = time.time()
+        
         if isinstance(expert_ids, list):
             indices = adapter_setup.get_expert_indices(expert_ids)
         elif isinstance(expert_ids, torch.Tensor):
             indices = expert_ids.squeeze()
         else:
             raise ValueError("Expert ids must be a list of strings or a tensor of indices.")
-        print(f"Determine indices: {time.time() - t2:.3e} seconds")
-
-        # Step 3: Create routing matrix
-        t3 = time.time()
+        
+        # TODO-FT: implement more refined routing
         routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float)
         routing = routing.unsqueeze(0) if len(routing.shape) == 1 else routing
-        print(f"Create routing matrix: {time.time() - t3:.3e} seconds")
 
-        # Step 4: Get router
-        t4 = time.time()
         router = self.loras[adapter_setup.get_router_name()]
-        print(f"Get router: {time.time() - t4:.3e} seconds")
 
-        # Step 5: Prepare hidden states
-        t5 = time.time()
-        hidden_states = state.hidden_states if state.hidden_states is not None else state.layer_input
-        hidden_states = hidden_states.unsqueeze(1).expand(-1, adapter_setup.num_experts, -1, -1)
+        hidden_states = state.hidden_states
+        if hidden_states is None:
+            hidden_states = state.layer_input
+        
+        # Gather hidden states after dropout...
+        # NOTE: This assumes same dropout for all experts
+        # hidden_states = hidden_states.unsqueeze(1).expand(-1, adapter_setup.num_experts, -1, -1)
         if router.dropout > 0.0:
             hidden_states = F.dropout(hidden_states, p=router.dropout, training=self.training)
-        print(f"Prepare hidden states: {time.time() - t5:.3e} seconds")
 
-        # # Step 6: Get A and B matrices
-        # t6 = time.time()
-        # A = router.lora_A  # (n_exp, low_rank, hidden_size)
-        # B = router.lora_B  # (n_exp, hidden_size, low_rank)
-        # print(f"Get A and B matrices: {time.time() - t6:.3e} seconds")
+        # ...as well as A and B matrices        
+        A = router.lora_A #(n_exp, low_rank, hidden_size)
+        B = router.lora_B #(n_exp, hidden_size, low_rank)
 
-        # Step 7: Apply routing to A and B
-        t7 = time.time()
-        a_routed = torch.einsum("be,erh -> brh", routing, router.lora_A)  # (bsz, low_rank, hidden_size)
-        b_routed = torch.einsum("be,ehr -> bhr", routing, router.lora_B)  # (bsz, hidden_size, low_rank)
-        print(f"Apply routing to A and B: {time.time() - t7:.3e} seconds")
+        # Apply routing to A and B
+        a_routed = torch.einsum("be,erh -> brh", routing, A) # (bsz, low_rank, hidden_size)
+        b_routed = torch.einsum("be,ehr -> bhr", routing, B) # (bsz, hidden_size, low_rank)
 
-        # Step 8: Apply A and B to hidden states
-        t8 = time.time()
-        hidden_states = torch.einsum("besh, bhr, brh -> bsh", hidden_states, b_routed, a_routed)  # (bsz, sent_len, hidden_size)
-        print(f"Apply A and B to hidden states: {time.time() - t8:.3e} seconds")
-
-        # Step 9: Update state and return
-        t9 = time.time()
-        final_state = state._replace(hidden_states=hidden_states, last=adapter_setup.last())
-        print(f"Update state and return: {time.time() - t9:.3e} seconds")
-
-        # Total execution time
-        print(f"Total execution time: {time.time() - start_time:.3e} seconds")
-
-        return final_state
-
-
-    # def compose_expert_routing(self, adapter_setup: ExpertRouter, state: LoRAState, lvl: int = 0) -> LoRAState:
-    #     context = ForwardContext.get_context()
-    #     expert_ids = context.adapter_expert_ids
-    #     if len(expert_ids) != self._bsz(state):
-    #         raise ValueError("Number of expert ids must match the batch size.")
-        
-    #     if isinstance(expert_ids, list):
-    #         indices = adapter_setup.get_expert_indices(expert_ids)
-    #     elif isinstance(expert_ids, torch.Tensor):
-    #         indices = expert_ids.squeeze()
-    #     else:
-    #         raise ValueError("Expert ids must be a list of strings or a tensor of indices.")
-        
-    #     # TODO-FT: implement more refined routing
-    #     routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float)
-    #     routing = routing.unsqueeze(0) if len(routing.shape) == 1 else routing
-
-    #     router = self.loras[adapter_setup.get_router_name()]
-
-    #     hidden_states = state.hidden_states
-    #     if hidden_states is None:
-    #         hidden_states = state.layer_input
-        
-    #     # Gather hidden states after dropout...
-    #     # NOTE: This assumes same dropout for all experts
-    #     hidden_states = hidden_states.unsqueeze(1).expand(-1, adapter_setup.num_experts, -1, -1)
-    #     if router.dropout > 0.0:
-    #         hidden_states = F.dropout(hidden_states, p=router.dropout, training=self.training)
-
-    #     # ...as well as A and B matrices        
-    #     A = router.lora_A #(n_exp, low_rank, hidden_size)
-    #     B = router.lora_B #(n_exp, hidden_size, low_rank)
-
-    #     # Apply routing to A and B
-    #     a_routed = torch.einsum("be,erh -> brh", routing, A) # (bsz, low_rank, hidden_size)
-    #     b_routed = torch.einsum("be,ehr -> bhr", routing, B) # (bsz, hidden_size, low_rank)
-
-    #     # Apply A and B to hidden states
-    #     hidden_states = torch.einsum("besh, bhr, brh -> bsh", hidden_states, b_routed, a_routed) # (bsz, sent_len, hidden_size)
+        # Apply A and B to hidden states
+        hidden_states = torch.einsum("bsh, bhr, brh -> bsh", hidden_states, b_routed, a_routed) # (bsz, sent_len, hidden_size)
                 
-    #     # TODO-FT: Implement gating if needed
+        # TODO-FT: Implement gating if needed
         
-    #     return state._replace(hidden_states=hidden_states, last=adapter_setup.last())
+        return state._replace(hidden_states=hidden_states, last=adapter_setup.last())
 
     def forward(self, input_states: torch.Tensor):
         if self.fan_in_fan_out:

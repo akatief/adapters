@@ -108,6 +108,7 @@ class Average(AdapterCompositionBlock):
 
 class ExpertRouter(AdapterCompositionBlock):
     def __init__(self, *router_name: List[str], n_experts: int, experts: List[str]):
+        # TODO-FT: Support fancier routing mechanisms, like hierarchical
         super().__init__(*router_name)
         # Prepares a mapping from expert ids to indices
         # Multiple indices can be assigned to the same expert id
