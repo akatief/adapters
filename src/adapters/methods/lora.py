@@ -553,8 +553,8 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         b_routed = torch.einsum("be,ehr -> bhr", routing, B) # (bsz, hidden_size, low_rank)
 
         # Apply A and B to hidden states
-        hidden_states = torch.einsum("bsh, bhr, brh -> bsh", hidden_states, b_routed, a_routed) # (bsz, sent_len, hidden_size)
-                
+        hidden_states = torch.einsum("bsh, brh, bor -> bso", hidden_states, a_routed, b_routed) # (bsz, sent_len, out_hidden_size)
+
         # TODO-FT: Implement gating if needed
         
         return state._replace(hidden_states=hidden_states, last=adapter_setup.last())
