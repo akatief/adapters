@@ -529,7 +529,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
 
         # TODO-FT: implement more refined routing
-        routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float)
+        routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(self.weight.dtype)
         routing = routing.unsqueeze(0) if len(routing.shape) == 1 else routing
 
         router = self.loras[adapter_setup.get_router_name()]
