@@ -20,6 +20,7 @@ from .adapter_layer_base import AdapterLayerBase, ComposableAdapterLayerBase
 from .utils import dequantize_bnb_weight
 from ..context import ForwardContext
 
+import time
 
 try:
     from bitsandbytes.nn import Int8Params, Linear4bit, Linear8bitLt, Params4bit
@@ -46,6 +47,8 @@ class LoRA(nn.Module):
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
         self.use_gating = config.use_gating
+        self.dropout = config.dropout
+
         # Optional dropout
         if config.dropout > 0.0:
             self.lora_dropout = nn.Dropout(p=config.dropout)
@@ -436,6 +439,8 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         return self.attn_key is None or self.attn_key in config.attn_matrices
 
     def _get_lora_shapes(self, config: LoRAConfig):
+        if config.n_experts is not None: # Expert adapter setup
+            return (config.n_experts, config.r, self.in_features), (config.n_experts, self.out_features, config.r)
         return (config.r, self.in_features), (self.out_features, config.r)
 
     def maybe_t(self, w):
@@ -506,45 +511,50 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
             self._store_gating_score(adapter_setup, gate)
 
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
-    
+
     def compose_expert_routing(self, adapter_setup: ExpertRouter, state: LoRAState, lvl: int = 0) -> LoRAState:
         context = ForwardContext.get_context()
         expert_ids = context.adapter_expert_ids
-        if len(expert_ids) != self._bsz(state):
-            raise ValueError("Number of expert ids must match the batch size.")
         
         if isinstance(expert_ids, list):
             indices = adapter_setup.get_expert_indices(expert_ids)
+            indices = indices.to(state.layer_input.device)
         elif isinstance(expert_ids, torch.Tensor):
             indices = expert_ids.squeeze()
         else:
             raise ValueError("Expert ids must be a list of strings or a tensor of indices.")
-        
+
+        if len(expert_ids) != self._bsz(state):
+            raise ValueError("Number of expert ids must match the batch size.")
+
+
         # TODO-FT: implement more refined routing
-        routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(torch.float)
+        routing = F.one_hot(indices, num_classes=adapter_setup.num_experts).type(self.weight.dtype)
         routing = routing.unsqueeze(0) if len(routing.shape) == 1 else routing
 
-        loras = [self.loras[e] for e in adapter_setup]
+        router = self.loras[adapter_setup.get_router_name()]
 
         hidden_states = state.hidden_states
         if hidden_states is None:
             hidden_states = state.layer_input
         
         # Gather hidden states after dropout...
-        dropout_states = [lora.lora_dropout(hidden_states) for lora in loras]
-        hidden_states = torch.stack(dropout_states, dim=1) # (bsz, n_exp, sent_len, hidden_size)
+        # NOTE: This assumes same dropout for all experts
+        # hidden_states = hidden_states.unsqueeze(1).expand(-1, adapter_setup.num_experts, -1, -1)
+        if router.dropout > 0.0:
+            hidden_states = F.dropout(hidden_states, p=router.dropout, training=self.training)
 
         # ...as well as A and B matrices        
-        A = torch.stack([lora.lora_A for lora in loras], dim=0) #(n_exp, low_rank, hidden_size)
-        B = torch.stack([lora.lora_B for lora in loras], dim=0) #(n_exp, hidden_size, low_rank)
+        A = router.lora_A #(n_exp, low_rank, hidden_size)
+        B = router.lora_B #(n_exp, hidden_size, low_rank)
 
         # Apply routing to A and B
         a_routed = torch.einsum("be,erh -> brh", routing, A) # (bsz, low_rank, hidden_size)
         b_routed = torch.einsum("be,ehr -> bhr", routing, B) # (bsz, hidden_size, low_rank)
 
         # Apply A and B to hidden states
-        hidden_states = torch.einsum("besh, bhr, brh -> bsh", hidden_states, b_routed, a_routed) # (bsz, sent_len, hidden_size)
-                
+        hidden_states = torch.einsum("bsh, brh, bor -> bso", hidden_states, a_routed, b_routed) # (bsz, sent_len, out_hidden_size)
+
         # TODO-FT: Implement gating if needed
         
         return state._replace(hidden_states=hidden_states, last=adapter_setup.last())

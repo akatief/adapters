@@ -144,9 +144,11 @@ class ModelWithFlexibleHeadsAdaptersMixin(ModelWithHeadsAdaptersMixin):
         if not self.config.tie_word_embeddings:
             for head in self.heads.values():
                 old_lm_head = self.get_output_embeddings()
+
                 if old_lm_head is not None:
                     new_lm_head = self._get_resized_lm_head(old_lm_head, new_num_tokens)
                     self.set_output_embeddings(new_lm_head)
+                    head.config['vocab_size'] = new_num_tokens
 
         return self.get_input_embeddings()
 

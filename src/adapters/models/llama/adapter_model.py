@@ -149,6 +149,7 @@ class LlamaAdapterModel(EmbeddingAdaptersWrapperMixin, ModelWithFlexibleHeadsAda
                 "use_cache": kwargs.get("use_cache"),
                 "attention_mask": attention_mask,
                 "adapter_input_parallelized": kwargs.pop("adapter_input_parallelized", False),
+                "adapter_expert_ids": kwargs.pop("adapter_expert_ids", False),
             }
         )
         return model_inputs
